@@ -55,7 +55,8 @@ if (process.env.NODE_ENV === 'production') {
   // Set static folder
   app.use(express.static(path.join(__dirname, '../build')));
 
-  app.get('*', (req, res) => {
+  // Catch-all route to serve React app for any unhandled routes
+  app.use((req, res) => {
     res.sendFile(path.resolve(__dirname, '../build', 'index.html'));
   });
 }
