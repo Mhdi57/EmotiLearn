@@ -1,0 +1,68 @@
+.countdown-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+  border-radius: 30px;
+}
+
+.countdown-blur-bg {
+  position: absolute;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(78, 205, 196, 0.3) 0%, rgba(255, 255, 255, 0) 70%);
+  border-radius: 50%;
+  z-index: -1;
+  animation: pulseBg 2s ease-in-out infinite;
+}
+
+@keyframes pulseBg {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.5); opacity: 0.8; }
+}
+
+.countdown-number {
+  font-size: 120px;
+  font-weight: 900;
+  color: #4ECDC4;
+  text-shadow: 0 10px 30px rgba(78, 205, 196, 0.4);
+  transform: scale(0);
+  opacity: 0;
+  user-select: none;
+  z-index: 1001;
+}
+
+.countdown-number.animate {
+  animation: numberIn 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes numberIn {
+  0% {
+    transform: scale(0.5) rotate(-10deg);
+    opacity: 0;
+    filter: blur(10px);
+  }
+  30% {
+    transform: scale(1.2) rotate(5deg);
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    transform: scale(1) rotate(0deg);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+/* Custom colors for each number */
+.count-3 { color: #FF7675; text-shadow: 0 10px 30px rgba(255, 118, 117, 0.4); font-size: 140px !important; }
+.count-2 { color: #FDCB6E; text-shadow: 0 10px 30px rgba(253, 203, 110, 0.4); font-size: 140px !important; }
+.count-1 { color: #55E6C1; text-shadow: 0 10px 40px rgba(85, 230, 193, 0.5); font-size: 140px !important; }

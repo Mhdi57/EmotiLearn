@@ -1,14 +1,8 @@
-/**
- * CameraView.js - Live camera with real-time facial expression detection
- *
- * Uses face-api.js to detect emotions in real-time from the webcam.
- * When the child makes the correct face, it auto-triggers success.
- */
-
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import * as faceapi from 'face-api.js';
+import './CameraView.css';
 
-// Map face-api.js expression names to our app's emotion names
+// Map face-api expressions to our target emotions
 const EXPRESSION_MAP = {
   happy: 'happy',
   sad: 'sad',
@@ -19,19 +13,33 @@ const EXPRESSION_MAP = {
   disgusted: 'angry', // map disgusted to angry (close enough for kids)
 };
 
-const CameraView = ({ targetEmotion, onEmotionDetected, onSuccess, loading }) => {
+const CameraView = ({ targetEmotion, onEmotionDetected, onSuccess, onReady, loading, hideVideo, activeDetection = true }) => {
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const detectionLoopRef = useRef(null);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [cameraError, setCameraError] = useState(null);
+
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const [detectedEmotion, setDetectedEmotion] = useState(null);
   const [confidence, setConfidence] = useState(0);
   const [matchProgress, setMatchProgress] = useState(0); // 0-100, how long they've held the right face
   const matchCountRef = useRef(0);
   const successTriggeredRef = useRef(false);
+  const activeDetectionRef = useRef(activeDetection);
+
+  // Reset progress when target emotion changes
+  useEffect(() => {
+    matchCountRef.current = 0;
+    successTriggeredRef.current = false;
+    setMatchProgress(0);
+    setDetectedEmotion(null);
+    setConfidence(0);
+  }, [targetEmotion]);
+
+  // Sync prop to ref for zero-latency access in the detection loop
+  useEffect(() => {
+    activeDetectionRef.current = activeDetection;
+  }, [activeDetection]);
 
   // Load face-api.js models
   useEffect(() => {
@@ -40,65 +48,41 @@ const CameraView = ({ targetEmotion, onEmotionDetected, onSuccess, loading }) =>
         const MODEL_URL = process.env.PUBLIC_URL + '/models';
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-          faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+          faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
         ]);
         setModelsLoaded(true);
-        console.log('Face detection models loaded!');
       } catch (err) {
         console.error('Error loading models:', err);
-        setCameraError('Could not load face detection. Please refresh the page.');
       }
     };
     loadModels();
   }, []);
 
-  // Start the camera
+  // Initialize Camera
   useEffect(() => {
     if (!modelsLoaded) return;
 
-    let mounted = true;
-
-    const startCamera = async () => {
+    const startVideo = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-          audio: false,
+          video: {
+            width: 640,
+            height: 480,
+            facingMode: 'user'
+          }
         });
-
-        if (!mounted) {
-          stream.getTracks().forEach(track => track.stop());
-          return;
-        }
-
-        streamRef.current = stream;
-
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.onplaying = () => {
-            if (mounted) setCameraReady(true);
-          };
-          try {
-            await videoRef.current.play();
-          } catch (playErr) {
-            console.warn('Auto-play issue:', playErr);
-          }
+          streamRef.current = stream;
         }
       } catch (err) {
-        console.error('Camera access error:', err);
-        if (mounted) {
-          setCameraError(
-            err.name === 'NotAllowedError'
-              ? 'Camera access denied. Please allow camera access and refresh.'
-              : 'Could not access camera. Please check your device.'
-          );
-        }
+        console.error('Error starting camera:', err);
       }
     };
 
-    startCamera();
+    startVideo();
 
     return () => {
-      mounted = false;
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
         streamRef.current = null;
@@ -123,62 +107,69 @@ const CameraView = ({ targetEmotion, onEmotionDetected, onSuccess, loading }) =>
 
     try {
       const detection = await faceapi
-        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.3 }))
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.1 }))
         .withFaceExpressions();
 
-      if (detection) {
-        const expressions = detection.expressions;
-        // Find the dominant expression
-        let maxExpr = 'neutral';
-        let maxConf = 0;
+      // Report ready to parent on first successful load/detection
+      if (modelsLoaded && !successTriggeredRef.current && onReady) {
+        onReady();
+      }
 
-        Object.entries(expressions).forEach(([expr, conf]) => {
-          if (conf > maxConf) {
-            maxConf = conf;
-            maxExpr = expr;
-          }
-        });
-
-        const mappedEmotion = EXPRESSION_MAP[maxExpr] || 'neutral';
-        setDetectedEmotion(mappedEmotion);
-        setConfidence(Math.round(maxConf * 100));
-
-        // Report detected emotion to parent
-        if (onEmotionDetected) {
-          onEmotionDetected(mappedEmotion, maxConf);
-        }
-
-        // Check if it matches the target (low threshold so it's quick and fun)
-        if (mappedEmotion === targetEmotion && maxConf > 0.25) {
-          matchCountRef.current += 1;
-          // Need 5 consecutive frames (~1 second) — balanced speed
-          const progress = Math.min((matchCountRef.current / 5) * 100, 100);
-          setMatchProgress(progress);
-
-          if (matchCountRef.current >= 5 && !successTriggeredRef.current) {
-            successTriggeredRef.current = true;
-            setMatchProgress(100);
-            // Trigger success!
-            if (onSuccess) {
-              onSuccess({
-                detected_emotion: mappedEmotion,
-                confidence: maxConf,
-                success: true,
-              });
-            }
-            return; // Stop the loop
-          }
-        } else {
-          // Wrong expression — decay progress slowly
+      if (!detection) {
+        if (activeDetectionRef.current) {
+          setDetectedEmotion(null);
+          setConfidence(0);
           matchCountRef.current = Math.max(0, matchCountRef.current - 0.5);
-          setMatchProgress(Math.max(0, (matchCountRef.current / 5) * 100));
+          setMatchProgress(Math.max(0, (matchCountRef.current / 3) * 100));
+        }
+        return;
+      }
+
+      // If detection is not active yet (during countdown), we still run it to "warm up" the model
+      if (!activeDetectionRef.current) return;
+
+      const expressions = detection.expressions;
+      // Find the dominant expression
+      let maxExpr = 'neutral';
+      let maxConf = 0;
+
+      Object.entries(expressions).forEach(([expr, conf]) => {
+        if (conf > maxConf) {
+          maxConf = conf;
+          maxExpr = expr;
+        }
+      });
+
+      const mappedEmotion = EXPRESSION_MAP[maxExpr] || 'neutral';
+      setDetectedEmotion(mappedEmotion);
+      setConfidence(Math.round(maxConf * 100));
+
+      // Report detected emotion to parent
+      if (onEmotionDetected) {
+        onEmotionDetected(mappedEmotion, maxConf);
+      }
+
+      // Check if it matches the target
+      if (mappedEmotion === targetEmotion && maxConf > 0.15) {
+        matchCountRef.current += 1;
+        const progress = Math.min((matchCountRef.current / 5) * 100, 100);
+        setMatchProgress(progress);
+
+        if (matchCountRef.current >= 5 && !successTriggeredRef.current) {
+          successTriggeredRef.current = true;
+          setMatchProgress(100);
+          if (onSuccess) {
+            onSuccess({
+              detected_emotion: mappedEmotion,
+              confidence: maxConf,
+              success: true,
+            });
+          }
         }
       } else {
-        // No face detected
-        setDetectedEmotion(null);
-        setConfidence(0);
-        matchCountRef.current = Math.max(0, matchCountRef.current - 0.5);
-        setMatchProgress(Math.max(0, (matchCountRef.current / 3) * 100));
+        // Wrong expression — decay progress quickly
+        matchCountRef.current = Math.max(0, matchCountRef.current - 1.5);
+        setMatchProgress(Math.max(0, (matchCountRef.current / 5) * 100));
       }
     } catch (err) {
       console.error('Detection error:', err);
@@ -191,12 +182,14 @@ const CameraView = ({ targetEmotion, onEmotionDetected, onSuccess, loading }) =>
 
     const interval = setInterval(() => {
       runDetection();
-    }, 200); // Run detection every 200ms — fast and responsive
+    }, 100);
 
     detectionLoopRef.current = interval;
 
     return () => {
-      clearInterval(interval);
+      if (detectionLoopRef.current) {
+        clearInterval(detectionLoopRef.current);
+      }
     };
   }, [cameraReady, modelsLoaded, runDetection]);
 
@@ -204,128 +197,74 @@ const CameraView = ({ targetEmotion, onEmotionDetected, onSuccess, loading }) =>
   const getProgressColor = () => {
     if (matchProgress >= 80) return '#4CAF50';
     if (matchProgress >= 40) return '#FF9800';
-    return '#e0e0e0';
-  };
-
-  // Get emoji for detected emotion
-  const getDetectedEmoji = () => {
-    const emojiMap = {
-      happy: '😊', sad: '😢', neutral: '😐',
-      angry: '😠', surprised: '😮', scared: '😨',
-    };
-    return emojiMap[detectedEmotion] || '🤔';
+    return '#74B9FF';
   };
 
   return (
     <div className="camera-view">
-      {/* Hidden canvas for processing */}
-      <canvas ref={canvasRef} style={{ display: 'none' }} />
-
-      {/* Camera error state */}
-      {cameraError && (
-        <div className="camera-error">
-          <div className="camera-error-icon">📷❌</div>
-          <p className="camera-error-text">{cameraError}</p>
-        </div>
-      )}
-
-      {/* Loading models */}
-      {!modelsLoaded && !cameraError && (
-        <div className="camera-loading-models">
-          <div className="models-spinner" />
-          <span className="models-loading-text">Loading face detection AI...</span>
-        </div>
-      )}
-
-      {/* Live video feed */}
-      {!cameraError && modelsLoaded && (
-        <div className="camera-feed-container">
-          {/* Loading camera */}
-          {!cameraReady && (
-            <div className="camera-loading">
-              <div className="camera-loading-animation">
-                <span className="camera-loading-icon">📷</span>
-                <span className="camera-loading-text">Starting camera...</span>
-              </div>
-            </div>
-          )}
-
+      <div className="camera-container">
+        <div className="video-wrapper">
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
-            className={`camera-video ${cameraReady ? 'visible' : 'hidden'}`}
+            className={`camera-video ${cameraReady && !hideVideo ? 'visible' : 'hidden'}`}
+            onCanPlay={() => setCameraReady(true)}
           />
 
-          {/* Border color changes based on match */}
           <div
             className="camera-overlay-border"
             style={{
-              borderColor: matchProgress > 60 ? '#4CAF50' : matchProgress > 20 ? '#FF9800' : '#74B9FF',
-              boxShadow: matchProgress > 60
-                ? '0 0 20px rgba(76, 175, 80, 0.4), inset 0 0 20px rgba(76, 175, 80, 0.1)'
-                : 'none',
+              borderColor: getProgressColor(),
+              boxShadow: matchProgress > 0 ? `0 0 20px ${getProgressColor()}44` : 'none'
             }}
           />
 
-          {/* Face guide */}
-          {cameraReady && (
-            <div className="camera-face-guide">
-              <div
-                className="face-guide-oval"
-                style={{ borderColor: `rgba(${matchProgress > 60 ? '76,175,80' : '255,255,255'}, 0.4)` }}
-              />
+          {/* Face guide - Using provided baby icon */}
+          <div className={`camera-face-guide ${hideVideo ? 'countdown-mode' : ''}`}>
+            <img
+              src="/assets/camera-guide.png"
+              alt="Face Guide"
+              className="face-guide-image"
+              style={{
+                borderColor: matchProgress > 60 ? '#4CAF50' : 'rgba(255,255,255,0.4)',
+                filter: matchProgress > 60 ? 'drop-shadow(0 0 10px #4CAF50)' : 'none'
+              }}
+            />
+          </div>
+
+          {/* Detected emotion label */}
+          {activeDetection && detectedEmotion && (
+            <div className="detected-emotion-label" style={{ backgroundColor: getProgressColor() }}>
+              {detectedEmotion.charAt(0).toUpperCase() + detectedEmotion.slice(1)} {confidence}%
             </div>
           )}
 
-          {/* Real-time emotion indicator overlay */}
-          {cameraReady && detectedEmotion && (
-            <div className="detected-emotion-overlay">
-              <span className="detected-emoji">{getDetectedEmoji()}</span>
-              <span className="detected-label">{detectedEmotion}</span>
-              <span className="detected-confidence">{confidence}%</span>
-            </div>
-          )}
-
-          {/* Match progress bar at the bottom */}
-          {cameraReady && (
-            <div className="match-progress-container">
-              <div
-                className="match-progress-bar"
-                style={{
-                  width: `${matchProgress}%`,
-                  backgroundColor: getProgressColor(),
-                }}
-              />
+          {/* Loading indicator */}
+          {(!cameraReady || !modelsLoaded || loading) && (
+            <div className="camera-loading">
+              <div className="spinner" />
+              <p>{!modelsLoaded ? 'Loading AI...' : 'Starting Camera...'}</p>
             </div>
           )}
         </div>
-      )}
+      </div>
 
-      {/* Status text below camera */}
-      {cameraReady && !loading && (
-        <div className="camera-status">
-          {matchProgress >= 80 ? (
-            <span className="status-text status-text--great">Almost there! Hold it! 🎯</span>
-          ) : detectedEmotion === targetEmotion ? (
-            <span className="status-text status-text--good">That's it! Keep holding! 👏</span>
-          ) : detectedEmotion ? (
-            <span className="status-text status-text--try">
-              I see <strong>{detectedEmotion}</strong> — try to look more <strong>{targetEmotion}</strong>!
-            </span>
-          ) : (
-            <span className="status-text status-text--waiting">Show me your face! 👀</span>
-          )}
-        </div>
-      )}
-
-      {/* Analyzing state */}
-      {loading && (
-        <div className="camera-analyzing">
-          <div className="analyzing-animation">
-            <div className="analyzing-spinner" />
-            <span className="analyzing-text">Checking your face...</span>
+      {/* Progress bar below the camera */}
+      {activeDetection && (
+        <div className="match-progress-container">
+          <div className="match-progress-text">
+            {matchProgress < 100 ? 'Hold that face!' : 'Perfect! 🌟'}
+          </div>
+          <div className="match-progress-bar-bg">
+            <div
+              className="match-progress-bar-fill"
+              style={{
+                width: `${matchProgress}%`,
+                backgroundColor: getProgressColor()
+              }}
+            />
           </div>
         </div>
       )}

@@ -1,105 +1,112 @@
-/**
- * ActivityScreen.js - The main game screen
- *
- * Game flow:
- *   Step 1 (PLAY) → Character reference + live camera side-by-side
- *                    Auto-detects when child makes the right face
- *   Step 2 (CELEBRATION) → Big celebration with confetti + stars
- *   Step 3 (SESSION_END) → Session complete summary
- *
- * Uses face-api.js for real-time expression detection.
- * The child sees the character's emotion and imitates it on camera.
- * When they hold the correct expression, it auto-triggers success!
- */
-
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import CameraView from './components/CameraView';
+import CountdownOverlay from './components/CountdownOverlay';
 import Confetti from './components/Confetti';
 import ProgressBar from './components/ProgressBar';
-import { saveProgress } from './utils/api';
+import { ALL_EMOTIONS, LEVEL_EMOTIONS } from './utils/emotions';
 import { playSound } from './utils/sounds';
+import { saveProgress } from './utils/api';
 import './ActivityScreen.css';
 
-// All emotions the app teaches
-const ALL_EMOTIONS = {
-  happy:     { emoji: '😊', label: 'Happy',     color: '#FFD700', hint: 'Show a big smile!', character: '😊' },
-  sad:       { emoji: '😢', label: 'Sad',        color: '#74B9FF', hint: 'Make your face droopy', character: '😢' },
-  neutral:   { emoji: '😐', label: 'Neutral',    color: '#A0AEC0', hint: 'Relax your face', character: '😐' },
-  angry:     { emoji: '😠', label: 'Angry',      color: '#FF7675', hint: 'Scrunch your eyebrows', character: '😠' },
-  surprised: { emoji: '😮', label: 'Surprised',  color: '#FDCB6E', hint: 'Open your mouth wide!', character: '😮' },
-  scared:    { emoji: '😨', label: 'Scared',     color: '#A29BFE', hint: 'Make your eyes big', character: '😨' },
-};
-
-// Which emotions appear at each level
-const LEVEL_EMOTIONS = {
-  1: ['happy', 'sad', 'neutral'],
-  2: ['happy', 'sad', 'neutral', 'angry', 'surprised'],
-  3: ['happy', 'sad', 'neutral', 'angry', 'surprised', 'scared'],
+const STEPS = {
+  COUNTDOWN: 'countdown',
+  PLAY: 'play',
+  CELEBRATION: 'celebration',
+  SESSION_END: 'session_end'
 };
 
 const ROUNDS_PER_SESSION = 5;
 
-const STEPS = {
-  PLAY:        'play',          // Camera + reference — auto-detecting
-  CELEBRATION: 'celebration',   // Success celebration
-  SESSION_END: 'session_end',   // Session complete
-};
-
-function ActivityScreen({ childName, level = 1, settings, onGoHome }) {
-  const [step, setStep] = useState(STEPS.PLAY);
-  const [currentEmotion, setCurrentEmotion] = useState(null);
+const ActivityScreen = ({ childName, level, onGoHome, settings }) => {
   const [round, setRound] = useState(1);
-  const [sessionStars, setSessionStars] = useState(0);
+  const [currentEmotion, setCurrentEmotion] = useState(null);
   const [usedEmotions, setUsedEmotions] = useState([]);
+  const [step, setStep] = useState(STEPS.COUNTDOWN);
   const [showConfetti, setShowConfetti] = useState(false);
-  const [celebrationData, setCelebrationData] = useState(null);
   const [showNextBtn, setShowNextBtn] = useState(false);
+  const [sessionStars, setSessionStars] = useState(0);
+  const [celebrationData, setCelebrationData] = useState(null);
 
   // Character animation state for the reference card
   const [characterPhase, setCharacterPhase] = useState('neutral'); // neutral → performing → holding
+  const countdownAudioRef = useRef(null);
+
+  const handleCountdownFinished = useCallback(() => {
+    setStep(STEPS.PLAY);
+  }, []);
 
   // Pick a random emotion from the current level (avoid repeating)
-  const pickNextEmotion = useCallback((used) => {
-    const available = LEVEL_EMOTIONS[level].filter(e => !used.includes(e));
-    const pool = available.length > 0 ? available : LEVEL_EMOTIONS[level];
-    const picked = pool[Math.floor(Math.random() * pool.length)];
-    setCurrentEmotion(picked);
-    if (available.length > 0) {
-      setUsedEmotions(prev => [...prev, picked]);
-    } else {
-      setUsedEmotions([picked]);
+  const pickNextEmotion = useCallback((used, lastEmotion) => {
+    // 1. Get all emotions for this level
+    const allForLevel = LEVEL_EMOTIONS[level];
+
+    // 2. Try to pick one that hasn't been used in this session yet
+    // AND is not the one we just did
+    let available = allForLevel.filter(e => !used.includes(e) && e !== lastEmotion);
+
+    // 3. If everything has been used, reset the 'used' list but still avoid the last one
+    if (available.length === 0) {
+      available = allForLevel.filter(e => e !== lastEmotion);
     }
+
+    // 4. Final fallback (should only happen if level has only 1 emotion)
+    if (available.length === 0) available = allForLevel;
+
+    const picked = available[Math.floor(Math.random() * available.length)];
+    setCurrentEmotion(picked);
+    setUsedEmotions(prev => {
+      const nextUsed = [...prev, picked];
+      // If we've used all emotions, we might want to clear the 'used' history 
+      // but keep the 'lastEmotion' check active for the next round
+      return nextUsed.length >= allForLevel.length ? [] : nextUsed;
+    });
+    setCharacterPhase('neutral');
     return picked;
   }, [level]);
 
+  const sessionStartedRef = useRef(false);
+
   // Pick the first emotion when component loads
   useEffect(() => {
-    pickNextEmotion([]);
-  }, [pickNextEmotion]);
+    if (sessionStartedRef.current) return;
+    sessionStartedRef.current = true;
+
+    pickNextEmotion([], null);
+
+    // Initial audio play
+    if (settings.soundOn) {
+      const audio = new Audio('/sounds/countdown.mp3');
+      countdownAudioRef.current = audio;
+      audio.play().catch(err => {
+        console.warn("Audio play blocked:", err);
+        countdownAudioRef.current = null;
+      });
+    }
+  }, [pickNextEmotion, settings.soundOn]);
 
   // Character animation: neutral → performing when emotion changes
   useEffect(() => {
-    if (!currentEmotion) return;
-    setCharacterPhase('neutral');
-    const t1 = setTimeout(() => {
-      playSound('hover', settings.soundOn);
-      setCharacterPhase('performing');
-    }, 1000);
-    const t2 = setTimeout(() => setCharacterPhase('holding'), 3000); // Give them 2s to watch it perform
-    return () => { clearTimeout(t1); clearTimeout(t2); };
-  }, [currentEmotion, settings.soundOn]);
+    if (step === STEPS.PLAY || step === STEPS.COUNTDOWN) {
+      const timer = setTimeout(() => {
+        setCharacterPhase('performing');
+        playSound('instruction', settings.soundOn);
 
-  // When face-api detects the correct emotion
+        // After showing, hold for a bit then tell user it's their turn
+        setTimeout(() => setCharacterPhase('holding'), 2000);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [currentEmotion, step, settings.soundOn]);
+
+  // Handle successful emotion match
   const handleSuccess = useCallback(async (result) => {
+    if (step !== STEPS.PLAY) return;
+
     playSound('success', settings.soundOn);
-    const starsEarned = result.confidence > 0.85 ? 3 : result.confidence > 0.70 ? 2 : 1;
+    setCelebrationData(result);
 
-    setCelebrationData({
-      starsEarned,
-      confidence: Math.round(result.confidence * 100),
-      detected: result.detected_emotion,
-    });
-
+    // Earn stars based on confidence
+    const starsEarned = result.confidence > 0.8 ? 3 : (result.confidence > 0.5 ? 2 : 1);
     setSessionStars(prev => prev + starsEarned);
     setShowConfetti(true);
     setStep(STEPS.CELEBRATION);
@@ -120,7 +127,7 @@ function ActivityScreen({ childName, level = 1, settings, onGoHome }) {
     } catch (err) {
       console.error('Save error:', err);
     }
-  }, [childName, currentEmotion, level]);
+  }, [childName, currentEmotion, level, settings.soundOn, step]);
 
   // Move to next round
   const handleNext = () => {
@@ -133,8 +140,34 @@ function ActivityScreen({ childName, level = 1, settings, onGoHome }) {
       setStep(STEPS.SESSION_END);
     } else {
       setRound(prev => prev + 1);
-      pickNextEmotion(usedEmotions);
-      setStep(STEPS.PLAY);
+      pickNextEmotion(usedEmotions, currentEmotion);
+      setStep(STEPS.COUNTDOWN);
+
+      // Start countdown audio
+      if (settings.soundOn) {
+        if (countdownAudioRef.current) {
+          countdownAudioRef.current.pause();
+          countdownAudioRef.current.currentTime = 0;
+        }
+        countdownAudioRef.current = new Audio('/sounds/countdown.mp3');
+        countdownAudioRef.current.play().catch(err => console.warn("Audio play blocked:", err));
+      }
+    }
+  };
+
+  // Restart session
+  const handleRestart = () => {
+    playSound('click', settings.soundOn);
+    setRound(1);
+    setSessionStars(0);
+    setUsedEmotions([]);
+    setStep(STEPS.COUNTDOWN);
+    pickNextEmotion([], null);
+
+    if (settings.soundOn) {
+      const audio = new Audio('/sounds/countdown.mp3');
+      countdownAudioRef.current = audio;
+      audio.play().catch(err => console.warn("Audio play blocked:", err));
     }
   };
 
@@ -166,7 +199,7 @@ function ActivityScreen({ childName, level = 1, settings, onGoHome }) {
       <ProgressBar current={round} total={ROUNDS_PER_SESSION} />
 
       {/* ===== STEP 1: PLAY (Camera + Reference) ===== */}
-      {step === STEPS.PLAY && (
+      {(step === STEPS.PLAY || step === STEPS.COUNTDOWN) && (
         <div className="step-container play-container fade-in">
           {/* Instruction */}
           <div className="play-instruction">
@@ -181,7 +214,7 @@ function ActivityScreen({ childName, level = 1, settings, onGoHome }) {
             {/* Character reference card */}
             <div className="character-reference">
               <div className={`character-card character-card--${characterPhase}`}
-                   style={{ borderColor: emotionData.color }}>
+                style={{ borderColor: emotionData.color }}>
                 <div className="character-emoji">
                   {characterPhase === 'neutral' ? '😐' : emotionData.emoji}
                 </div>
@@ -200,7 +233,14 @@ function ActivityScreen({ childName, level = 1, settings, onGoHome }) {
                 targetEmotion={currentEmotion}
                 onSuccess={handleSuccess}
                 loading={false}
+                hideVideo={step === STEPS.COUNTDOWN}
+                activeDetection={step === STEPS.PLAY}
               />
+              {step === STEPS.COUNTDOWN && (
+                <CountdownOverlay
+                  onFinished={handleCountdownFinished}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -209,38 +249,15 @@ function ActivityScreen({ childName, level = 1, settings, onGoHome }) {
       {/* ===== STEP 2: CELEBRATION ===== */}
       {step === STEPS.CELEBRATION && celebrationData && (
         <div className="step-container celebration-container fade-in">
-          {/* Big celebration character */}
           <div className="celebration-character">
-            {/* ANIMATION PLACEHOLDER: Replace with celebrating character animation */}
             <div className="celebration-emoji-bounce">🎉</div>
           </div>
+          <h2 className="celebration-title">You did it! 🌟</h2>
+          <p className="celebration-text">That was a perfect {currentEmotion} face!</p>
 
-          <h2 className="celebration-title">Amazing job! 🌟</h2>
-          <p className="celebration-subtitle">
-            You made a perfect <strong style={{ color: emotionData.color }}>{emotionData.label}</strong> face!
-          </p>
-
-          {/* Stars earned */}
-          <div className="celebration-stars">
-            {[1, 2, 3].map((star) => (
-              <span
-                key={star}
-                className={`celebration-star ${star <= celebrationData.starsEarned ? 'earned' : 'unearned'}`}
-                style={{ animationDelay: `${0.5 + star * 0.3}s` }}
-              >
-                {star <= celebrationData.starsEarned ? '⭐' : '☆'}
-              </span>
-            ))}
-          </div>
-
-          <p className="celebration-confidence">
-            Accuracy: {celebrationData.confidence}%
-          </p>
-
-          {/* Next button (appears after delay) */}
           {showNextBtn && (
-            <button className="btn-primary next-btn fade-in" onClick={handleNext}>
-              {round >= ROUNDS_PER_SESSION ? '🏁 See Results!' : '➡️ Next Emotion!'}
+            <button className="next-btn interactive-btn pop-in" onClick={handleNext}>
+              Next Round →
             </button>
           )}
         </div>
@@ -248,47 +265,23 @@ function ActivityScreen({ childName, level = 1, settings, onGoHome }) {
 
       {/* ===== STEP 3: SESSION END ===== */}
       {step === STEPS.SESSION_END && (
-        <div className="session-end fade-in">
-          <Confetti active={true} duration={5000} />
-          <div className="session-end-card card">
-            <div className="celebration-emoji-bounce">🎊</div>
-            <h2>Amazing job, {childName}! 🏆</h2>
-            <p className="session-end-subtitle">You finished the session!</p>
-
-            <div className="total-stars-display">
-              <div className="total-stars-number">{sessionStars}</div>
-              <div className="total-stars-label">Stars Earned!</div>
-              <div className="stars-row">
-                {Array.from({ length: Math.min(sessionStars, 15) }).map((_, i) => (
-                  <span key={i} className="big-star" style={{ animationDelay: `${i * 0.1}s` }}>⭐</span>
-                ))}
-              </div>
-            </div>
-
-            <div className="session-actions">
-              <button
-                className="btn-primary interactive-btn"
-                onClick={() => {
-                  playSound('click', settings.soundOn);
-                  setRound(1);
-                  setSessionStars(0);
-                  setUsedEmotions([]);
-                  setShowConfetti(false);
-                  setStep(STEPS.PLAY);
-                  pickNextEmotion([]);
-                }}
-              >
-                🎮 Play Again!
-              </button>
-              <button className="btn-secondary interactive-btn" onClick={() => { playSound('click', settings.soundOn); onGoHome(); }}>
-                🏠 Go Home
-              </button>
-            </div>
+        <div className="step-container end-container fade-in">
+          <div className="end-trophy">🏆</div>
+          <h2 className="end-title">Session Complete!</h2>
+          <p className="end-text">You earned {sessionStars} stars today!</p>
+          <div className="end-stars">{'⭐'.repeat(Math.min(sessionStars, 10))}</div>
+          <div className="end-buttons">
+            <button className="finish-btn play-again-btn interactive-btn" onClick={handleRestart}>
+              🔄 Play Again
+            </button>
+            <button className="finish-btn interactive-btn" onClick={onGoHome}>
+              🏠 Back to Menu
+            </button>
           </div>
         </div>
       )}
     </div>
   );
-}
+};
 
 export default ActivityScreen;

@@ -1,0 +1,175 @@
+.camera-view {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.camera-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 30px;
+  overflow: hidden;
+  background: #1a1a2e;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.video-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.camera-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transform: scaleX(-1);
+  border-radius: 30px;
+  transition: opacity 0.5s ease;
+}
+
+.camera-video.visible {
+  opacity: 1;
+}
+
+.camera-video.hidden {
+  opacity: 0;
+}
+
+.camera-overlay-border {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border: 4px solid #74B9FF;
+  border-radius: 20px;
+  pointer-events: none;
+  transition: all 0.4s ease;
+  z-index: 2;
+}
+
+.camera-face-guide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  padding: 20px;
+  z-index: 3;
+}
+
+.camera-face-guide.countdown-mode {
+  z-index: 2001; /* Stay above the countdown blur */
+}
+
+.camera-face-guide.countdown-mode .face-guide-image {
+  opacity: 0.9;
+  filter: drop-shadow(0 0 20px rgba(255, 255, 255, 0.5));
+  transform: scale(1.05);
+}
+
+.face-guide-image {
+  width: 90%;
+  max-width: 380px;
+  height: auto;
+  opacity: 0.5;
+  transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  animation: silhouetteBreath 3s ease-in-out infinite;
+}
+
+@keyframes silhouetteBreath {
+
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.4;
+  }
+
+  50% {
+    transform: scale(1.05);
+    opacity: 0.7;
+  }
+}
+
+.detected-emotion-label {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  padding: 8px 15px;
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  border-radius: 20px;
+  font-weight: bold;
+  font-size: 14px;
+  z-index: 10;
+  backdrop-filter: blur(5px);
+}
+
+.camera-loading {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: #1a1a2e;
+  color: white;
+  z-index: 10;
+}
+
+.match-progress-container {
+  width: 100%;
+  margin-top: 15px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.match-progress-text {
+  font-weight: bold;
+  margin-bottom: 8px;
+  color: #4A5568;
+}
+
+.match-progress-bar-bg {
+  width: 100%;
+  height: 12px;
+  background: #EDF2F7;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.match-progress-bar-fill {
+  height: 100%;
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(255, 255, 255, 0.1);
+  border-left-color: #74B9FF;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

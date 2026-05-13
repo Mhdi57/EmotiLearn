@@ -58,6 +58,14 @@ export const playSound = (soundName, isSoundOn) => {
       setTimeout(() => playTone(659.25, 'square', 0.2, 0.05), 300); // E5
       setTimeout(() => playTone(880, 'square', 0.6, 0.05), 450); // A5
       break;
+    case 'countdown_tick':
+      // Mid-pitched beep
+      playTone(440, 'sine', 0.2, 0.1); // A4
+      break;
+    case 'countdown_go':
+      // High-pitched longer beep
+      playTone(880, 'sine', 0.4, 0.1); // A5
+      break;
     default:
       break;
   }
